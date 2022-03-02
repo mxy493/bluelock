@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+# -*- coding:utf-8 -*-
+
+'''
+Description: This is a script that automatically locks the screen
+    when Bluetooth device is disconnected, and unlocks the screen
+    when Bluetooth device reconnects again.
+Prerequisites:
+    1. A computer with a Bluetooth adapter
+    2. A Linux system (Ubuntu 20.04 LTS is recommended)
+    3. Make sure bluetoothctl is installed
+Usage:
+    Run: nohup ./bluelock &
+    Stop: killall -9 bluelock
+Author: mxy
+Email: mxy493@qq.com
+'''
+
+import os
+import subprocess
+import logging
+import logging.handlers
+from time import sleep
+from pathlib import Path
+
+log_file = str(Path.home()) + '/bluelock.log'
+config_file = str(Path.home()) + '/.config/bluelock.cfg'
+print(f'log_file: {log_file}')
+print(f'config_file: {config_file}')
+
+logger = logging.getLogger('bluelock')
+logger.setLevel(logging.DEBUG)
+
+formatter = logging.Formatter('[%(asctime)s] %(message)s')
+
+# create console handler and set level to debug
+file_handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=1024*1024*5)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
+
+
+def load_config():
+    with open(config_file, 'r') as f:
+        mac = f.read().strip()
+        return mac
+
+
+def save_config(mac):
+    with open(config_file, 'w') as f:
+        f.write(mac)
+
+
+def do_cmd(cmd, log=False):
+    logger.info(f'cmd: {cmd}')
+    p = subprocess.Popen(cmd, shell=True,
+                         stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    out, _ = p.communicate()
+    if log and out:
+        logger.info(out.decode('utf-8'))
+    return out.decode('utf-8')
+
+
+def wait_response(sp, keyword):
+    while True:
+        line = sp.stdout.readline().decode('utf-8')
+        if keyword in line:
+            return line
+        sleep(0.01)
+
+
+def is_locked():
+    # 是否锁屏
+    out = do_cmd('loginctl session-status')
+
+
+def lock_screen():
+    do_cmd('loginctl lock-session')
+
+
+def unlock_screen():
+    do_cmd('loginctl unlock-session')
+
+
+def gnome_screensaver_active():
+    do_cmd('gnome-screensaver-command -a')
+
+
+def gnome_screensaver_deactive():
+    do_cmd('gnome-screensaver-command -d')
+
+
+def bluetoothctl_is_power_on():
+    powered = False
+    out = do_cmd('bluetoothctl show')
+    if 'Powered: yes' in out:
+        powered = True
+    return powered
+
+
+def bluetoothctl_power_on():
+    out = do_cmd('bluetoothctl power on')
+    if 'Charging power on succeeded' in out:
+        return True
+    return False
+
+
+def bluetoothctl_power_off():
+    out = do_cmd('bluetoothctl power off')
+    if 'Charging power off succeeded' in out:
+        return True
+    return False
+
+
+def bluetoothctl_scan_on():
+    out = do_cmd('bluetoothctl scan on')
+
+
+def bluetoothctl_scan_off():
+    out = do_cmd('bluetoothctl scan off')
+
+
+def bluetoothctl_discoverable_on():
+    out = do_cmd(f'bluetoothctl discoverable on')
+    if 'Discoverable: yes' in out:
+        return True
+    return False
+
+
+def bluetoothctl_discoverable_off():
+    out = do_cmd(f'bluetoothctl discoverable off')
+    if 'Discoverable: no' in out:
+        return True
+    return False
+
+
+def bluetoothctl_get_discovered_devices():
+    out = do_cmd('bluetoothctl devices')
+    devices = []
+    for line in out.split('\n'):
+        device_info = line.split(' ')
+        mac = device_info[1]
+        name = ' '.join(device_info[2:])
+        devices.append({'mac': mac, 'name': name})
+        print(f'device: {mac} {name}')
+    return devices
+
+
+def bluetoothctl_get_devices():
+    p = subprocess.Popen('bluetoothctl', shell=True,
+                         stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    p.stdin.write('power on\n'.encode('utf-8'))
+    p.stdin.flush()
+    wait_response(p, 'power on')
+
+    p.stdin.write('agent on\n'.encode('utf-8'))
+    p.stdin.flush()
+
+    p.stdin.write('scan on\n'.encode('utf-8'))
+    p.stdin.flush()
+    wait_response(p, 'Discovering: yes')
+    sleep(5)
+
+    p.stdin.write('scan off\n'.encode('utf-8'))
+    p.stdin.flush()
+    wait_response(p, 'Discovering: no')
+
+    p.stdin.write('devices\n'.encode('utf-8'))
+    p.stdin.flush()
+
+    p.stdin.write('exit\n'.encode('utf-8'))
+    p.stdin.flush()
+
+    _out, _ = p.communicate()
+    out = _out.decode('utf-8')
+    print(out)
+    logger.info(out)
+
+    devices = []
+    if out:
+        for line in out.split('\n'):
+            line = line.strip()
+            if line.startswith('Device'):
+                device_info = line.split(' ')
+                mac = device_info[1]
+                name = ' '.join(device_info[2:])
+                devices.append({'mac': mac, 'name': name})
+                logger.info(f'device: {mac} {name}')
+    return devices
+
+
+def bluetoothctl_get_device_info(mac):
+    out = do_cmd(f'bluetoothctl info {mac}')
+    name = ''
+    for line in out.split('\n'):
+        line = line.strip()
+        if line.startswith('Name:'):
+            name = line[6:]
+    paired = True if 'Paired: yes' in out else False
+    trusted = True if 'Trusted: yes' in out else False
+    blocked = True if 'Blocked: yes' in out else False
+    connected = True if 'Connected: yes' in out else False
+
+    logger.info(f'mac: {mac}, name: {name}, paired: {paired}, trusted: {trusted}, blocked: {blocked}, connected: {connected}')
+    return {'name': name, 'paired': paired, 'trusted': trusted, 'blocked': blocked, 'connected': connected}
+
+
+def bluetoothctl_pair_device(mac):
+    logger.info(f'bluetoothctl_pair_device: {mac}')
+    out = do_cmd(f'bluetoothctl pair {mac}', True)
+    if 'Pairing successful' in out:
+        return True
+    return False
+
+
+def bluetoothctl_trust_device(mac):
+    logger.info(f'bluetoothctl_trust_device: {mac}')
+    out = do_cmd(f'bluetoothctl trust {mac}', True)
+    if ' trust succeeded' in out:
+        return True
+    return False
+
+
+def bluetoothctl_untrust_device(mac):
+    logger.info(f'bluetoothctl_untrust_device: {mac}')
+    out = do_cmd(f'bluetoothctl untrust {mac}', True)
+    if 'untrust succeeded' in out:
+        return True
+    return False
+
+
+def bluetoothctl_connect_device(mac):
+    logger.info(f'bluetoothctl_connect_device: {mac}')
+    out = do_cmd(f'bluetoothctl connect {mac}', True)
+    if 'Connection successful' in out:
+        return True
+    return False
+
+
+def wait_until_device_online(mac):
+    while True:
+        bluetoothctl_connect_device(mac)
+        sleep(5)
+        info = bluetoothctl_get_device_info(mac)
+        if info['connected']:
+            # wait for a while to avoid unlocking the screen too soon
+            sleep(10)
+            unlock_screen()
+            return
+        sleep(5)
+
+
+def main_loop(mac):
+    logger.info(f'main_loop running: {mac}')
+    while True:
+        info = bluetoothctl_get_device_info(mac)
+        if not info['connected']:
+            ret = bluetoothctl_connect_device(mac)
+            if not ret:
+                lock_screen()
+                wait_until_device_online(mac)
+        sleep(3)
+
+
+if __name__ == "__main__":
+    logger.info('bluelock start')
+
+    mac = ''
+    if os.path.isfile(config_file):
+        mac = load_config()
+    else:
+        print('Scanning for nearby devices...')
+        devices = bluetoothctl_get_devices()
+        if devices:
+            count = len(devices)
+            for index in range(count):
+                print(f'[{index}] {devices[index]["mac"]} {devices[index]["name"]}')
+            if(count > 0):
+                _index = input('Please enter a index to select a device: ')
+                if _index.isdigit():
+                    device_index = int(_index)
+                    mac = devices[device_index]['mac']
+                    save_config(mac)
+    if mac:
+        info = bluetoothctl_get_device_info(mac)
+        name = info.get('name', '')
+        logger.info(f'try to connect device: {mac} {name}')
+        if not info.get('trusted', False):
+            bluetoothctl_trust_device(mac)
+        if not info.get('paired', False):
+            bluetoothctl_pair_device(mac)
+        if not info.get('connected', False):
+            bluetoothctl_connect_device(mac)
+        
+        sleep(2)
+        info = bluetoothctl_get_device_info(mac)
+        if not info.get('connected', False):
+            print('Failed to connect to device, please connect the device manually.')
+            exit(0)
+        else:
+            print('Device is connected, the program is running...')
+            main_loop(mac)
