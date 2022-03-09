@@ -10,8 +10,14 @@ Prerequisites:
     2. A Linux system (Ubuntu 20.04 LTS is recommended)
     3. Make sure bluetoothctl is installed
 Usage:
-    Run: nohup ./bluelock &
-    Stop: killall -9 bluelock
+    For the first time:
+        Run: ./bluelock
+        Stop: Ctrl+C
+    After the first time:
+        Run:
+            - Press Alt+F2, then execute bluelock
+            - nohup ./bluelock &
+        Stop: killall -9 bluelock
 Author: mxy
 Email: mxy493@qq.com
 '''
@@ -34,7 +40,8 @@ logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('[%(asctime)s] %(message)s')
 
 # create console handler and set level to debug
-file_handler = logging.handlers.RotatingFileHandler(log_file, maxBytes=1024*1024*5)
+file_handler = logging.handlers.RotatingFileHandler(
+    log_file, maxBytes=1024*1024*5, backupCount=1)
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
@@ -48,12 +55,14 @@ logger.addHandler(stream_handler)
 def load_config():
     with open(config_file, 'r') as f:
         mac = f.read().strip()
+        logger.info(f'load_config mac: {mac}')
         return mac
 
 
 def save_config(mac):
     with open(config_file, 'w') as f:
         f.write(mac)
+        logger.info(f'save_config mac: {mac}')
 
 
 def do_cmd(cmd, log=False):
@@ -73,20 +82,21 @@ def wait_response(sp, keyword):
         line = sp.stdout.readline().decode('utf-8')
         if keyword in line:
             return line
-        sleep(0.01)
+        sleep(0.1)
 
 
 def is_locked():
-    # 是否锁屏
     out = do_cmd('loginctl session-status')
 
 
 def lock_screen():
     do_cmd('loginctl lock-session')
+    logger.info(f'screen locked')
 
 
 def unlock_screen():
     do_cmd('loginctl unlock-session')
+    logger.info(f'screen unlocked')
 
 
 def gnome_screensaver_active():
@@ -182,7 +192,6 @@ def bluetoothctl_get_devices():
 
     _out, _ = p.communicate()
     out = _out.decode('utf-8')
-    print(out)
     logger.info(out)
 
     devices = []
@@ -293,10 +302,9 @@ def bluetoothctl_connect_device(mac):
 
 def wait_until_device_online(mac):
     while True:
-        bluetoothctl_connect_device(mac)
-        sleep(5)
-        info = bluetoothctl_get_device_info(mac)
-        if info['connected']:
+        ret = bluetoothctl_connect_device(mac)
+        if ret:
+            logger.info(f'{mac} is online, the screen will unlock in 10 seconds')
             # wait for a while to avoid unlocking the screen too soon
             sleep(10)
             unlock_screen()
@@ -309,6 +317,7 @@ def main_loop(mac):
     while True:
         info = bluetoothctl_get_device_info(mac)
         if not info['connected']:
+            # reconnect once to avoid lock screen by mistake
             ret = bluetoothctl_connect_device(mac)
             if not ret:
                 lock_screen()
