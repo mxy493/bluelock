@@ -198,6 +198,18 @@ def bluetoothctl_get_devices():
     return devices
 
 
+def remove_duplicate_devices(devices):
+    # remove duplicate devices like:
+    # name: 53:B6:17:83:38:9A  mac: 53-B6-17-83-38-9A
+    i = 0
+    while i < len(devices):
+        if devices[i]['mac'] == devices[i]['name'].replace('-', ':'):
+            devices.pop(i)
+            continue
+        i += 1
+    return devices
+
+
 def bluetoothctl_get_device_info(mac):
     out = do_cmd(f'bluetoothctl info {mac}')
     name = ''
@@ -280,6 +292,7 @@ if __name__ == "__main__":
     else:
         print('Scanning for nearby devices...')
         devices = bluetoothctl_get_devices()
+        devices = remove_duplicate_devices(devices)
         if devices:
             count = len(devices)
             for index in range(count):
