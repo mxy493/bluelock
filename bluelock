@@ -228,10 +228,33 @@ def bluetoothctl_get_device_info(mac):
 
 def bluetoothctl_pair_device(mac):
     logger.info(f'bluetoothctl_pair_device: {mac}')
-    out = do_cmd(f'bluetoothctl pair {mac}', True)
-    if 'Pairing successful' in out:
-        return True
-    return False
+    p = subprocess.Popen(f'bluetoothctl', shell=True,
+                         stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    p.stdin.write(f'pair {mac}\n'.encode('utf-8'))
+    p.stdin.flush()
+    while True:
+        line = p.stdout.readline().decode('utf-8')
+        if f'{mac} not available' in line:
+            logger.info('bluetoothctl_pair_device: failed, device not available')
+            return False
+        elif 'Request confirmation' in line:
+            tmp = input('\033[32mPlease confirm the pairing on your portable device first, \nthen enter YES to complete the pairing: \033[0m')
+            if tmp.upper() == 'YES':
+                p.stdin.write('yes\n'.encode('utf-8'))
+                p.stdin.flush()
+                break
+        sleep(0.5)
+    while True:
+        line = p.stdout.readline().decode('utf-8')
+        if 'Pairing successful' in line:
+            logger.info('bluetoothctl_pair_device: success')
+            return True
+        if 'Failed to pair' in line:
+            logger.info('bluetoothctl_pair_device: failed')
+            return False
+        sleep(0.5)
 
 
 def bluetoothctl_trust_device(mac):
@@ -252,10 +275,20 @@ def bluetoothctl_untrust_device(mac):
 
 def bluetoothctl_connect_device(mac):
     logger.info(f'bluetoothctl_connect_device: {mac}')
-    out = do_cmd(f'bluetoothctl connect {mac}', True)
-    if 'Connection successful' in out:
-        return True
-    return False
+    p = subprocess.Popen(f'bluetoothctl connect {mac}', shell=True,
+                         stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    while True:
+        line = p.stdout.readline().decode('utf-8')
+        logger.info('line: ' + line)
+        if 'Connection successful' in line:
+            logger.info('bluetoothctl_connect_device: success')
+            return True
+        if 'Failed to connect' in line or f'{mac} not available' in line:
+            logger.info('bluetoothctl_connect_device: failed')
+            return False
+        sleep(0.5)
 
 
 def wait_until_device_online(mac):
@@ -289,18 +322,19 @@ if __name__ == "__main__":
     mac = ''
     if os.path.isfile(config_file):
         mac = load_config()
-    else:
-        print('Scanning for nearby devices...')
+    if not mac:
+        print('\033[32mScanning for nearby devices...\033[0m')
         devices = bluetoothctl_get_devices()
         devices = remove_duplicate_devices(devices)
         if devices:
+            print('\033[32mThe following devices were detected:\033[0m')
             count = len(devices)
             for index in range(count):
-                print(f'[{index}] {devices[index]["mac"]} {devices[index]["name"]}')
+                print(f'\033[32m[{index + 1}]\033[0m {devices[index]["mac"]} {devices[index]["name"]}')
             if(count > 0):
-                _index = input('Please enter a index to select a device: ')
+                _index = input('\033[32mPlease enter a index to select a device: \033[0m')
                 if _index.isdigit():
-                    device_index = int(_index)
+                    device_index = int(_index) - 1
                     mac = devices[device_index]['mac']
                     save_config(mac)
     if mac:
@@ -310,15 +344,14 @@ if __name__ == "__main__":
         if not info.get('trusted', False):
             bluetoothctl_trust_device(mac)
         if not info.get('paired', False):
-            bluetoothctl_pair_device(mac)
+            ret = bluetoothctl_pair_device(mac)
+            if not ret:
+                print('\033[31mFailed to pair device, please pair and connect the device manually.\033[0m')
+                exit(0)
         if not info.get('connected', False):
-            bluetoothctl_connect_device(mac)
-        
-        sleep(2)
-        info = bluetoothctl_get_device_info(mac)
-        if not info.get('connected', False):
-            print('Failed to connect to device, please connect the device manually.')
-            exit(0)
-        else:
-            print('Device is connected, the program is running...')
-            main_loop(mac)
+            ret = bluetoothctl_connect_device(mac)
+            if not ret:
+                print('\033[31mFailed to connect to device, please connect the device manually.\033[0m')
+                exit(0)
+        print('\033[32mDevice is connected, the program is running...\033[0m')
+        main_loop(mac)
