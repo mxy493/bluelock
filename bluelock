@@ -283,21 +283,42 @@ def bluetoothctl_untrust_device(mac):
 
 
 def bluetoothctl_connect_device(mac):
+    ret = False
     logger.info(f'bluetoothctl_connect_device: {mac}')
     p = subprocess.Popen(f'bluetoothctl connect {mac}', shell=True,
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT)
-    while True:
-        line = p.stdout.readline().decode('utf-8')
+    repower = False
+    empty_count = 0
+    while empty_count <= 20:
+        line = p.stdout.readline().decode('utf-8').strip()
         logger.info('line: ' + line)
-        if 'Connection successful' in line:
+        if not repower and 'Failed to connect: org.bluez.Error.NotReady' in line:
+            do_cmd('power off')
+            sleep(1)
+            do_cmd('power on')
+            p.stdin.flush()
+            repower = True
+            sleep(1)
+            # try to connect again
+            p.stdin.write(f'bluetoothctl connect {mac}\n'.encode('utf-8'))
+            p.stdin.flush()
+        elif 'Connection successful' in line:
             logger.info('bluetoothctl_connect_device: success')
-            return True
-        if 'Failed to connect' in line or f'{mac} not available' in line:
+            ret = True
+            break
+        elif 'Failed to connect' in line or f'{mac} not available' in line or 'No default controller available' in line:
             logger.info('bluetoothctl_connect_device: failed')
-            return False
-        sleep(0.5)
+            ret = False
+            break
+        if line:
+            empty_count = 0
+            sleep(0.01)
+        else:
+            empty_count += 1
+            sleep(0.5)
+    return ret
 
 
 def wait_until_device_online(mac):
