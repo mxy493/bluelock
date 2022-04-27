@@ -296,14 +296,13 @@ def bluetoothctl_connect_device(mac):
         logger.info('line: ' + line)
         if not repower and 'Failed to connect: org.bluez.Error.NotReady' in line:
             do_cmd('power off')
-            sleep(1)
+            sleep(2)
             do_cmd('power on')
-            p.stdin.flush()
-            repower = True
             sleep(1)
             # try to connect again
             p.stdin.write(f'bluetoothctl connect {mac}\n'.encode('utf-8'))
             p.stdin.flush()
+            repower = True
         elif 'Connection successful' in line:
             logger.info('bluetoothctl_connect_device: success')
             ret = True
@@ -352,22 +351,29 @@ if __name__ == "__main__":
     mac = ''
     if os.path.isfile(config_file):
         mac = load_config()
-    if not mac:
-        print('\033[32mScanning for nearby devices...\033[0m')
-        devices = bluetoothctl_get_devices()
-        devices = remove_duplicate_devices(devices)
-        if devices:
+
+    print('\033[32mScanning for nearby devices...\033[0m')
+    devices = bluetoothctl_get_devices()
+    devices = remove_duplicate_devices(devices)
+    if devices:
+        exist = False
+        for device in devices:
+            if device['mac'] == mac:
+                exist = True
+        if not exist:
             print('\033[32mThe following devices were detected:\033[0m')
             count = len(devices)
             for index in range(count):
                 print(f'\033[32m[{index + 1}]\033[0m {devices[index]["mac"]} {devices[index]["name"]}')
             if(count > 0):
                 _index = input('\033[32mPlease enter a index to select a device: \033[0m')
-                if _index.isdigit():
+                if _index.isdigit() and int(_index) > 0 and int(_index) <= count:
                     device_index = int(_index) - 1
                     mac = devices[device_index]['mac']
                     save_config(mac)
-    if mac:
+                else:
+                    exit(0)
+        # Try to connect device
         info = bluetoothctl_get_device_info(mac)
         name = info.get('name', '')
         logger.info(f'try to connect device: {mac} {name}')
