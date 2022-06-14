@@ -26,8 +26,9 @@ import os
 import subprocess
 import logging
 import logging.handlers
-from time import sleep
+import time
 from pathlib import Path
+
 
 log_file = str(Path.home()) + '/bluelock.log'
 config_file = str(Path.home()) + '/.config/bluelock.cfg'
@@ -77,12 +78,16 @@ def do_cmd(cmd, log=False):
     return out.decode('utf-8')
 
 
-def wait_response(sp, keyword):
+def wait_response(sp, keyword, timeout=5):
+    start = time.time()
     while True:
         line = sp.stdout.readline().decode('utf-8')
         if keyword in line:
             return line
-        sleep(0.1)
+        time.sleep(0.1)
+        if time.time() - start > timeout:
+            break
+    logger.error(f'wait_response timed out')
 
 
 def is_locked():
@@ -178,7 +183,7 @@ def bluetoothctl_get_devices():
     p.stdin.write('scan on\n'.encode('utf-8'))
     p.stdin.flush()
     wait_response(p, 'Discovering: yes')
-    sleep(5)
+    time.sleep(5)
 
     p.stdin.write('scan off\n'.encode('utf-8'))
     p.stdin.flush()
@@ -254,7 +259,7 @@ def bluetoothctl_pair_device(mac):
                 p.stdin.write('yes\n'.encode('utf-8'))
                 p.stdin.flush()
                 break
-        sleep(0.5)
+        time.sleep(0.5)
     while True:
         line = p.stdout.readline().decode('utf-8')
         if 'Pairing successful' in line:
@@ -263,7 +268,7 @@ def bluetoothctl_pair_device(mac):
         if 'Failed to pair' in line:
             logger.info('bluetoothctl_pair_device: failed')
             return False
-        sleep(0.5)
+        time.sleep(0.5)
 
 
 def bluetoothctl_trust_device(mac):
@@ -296,9 +301,9 @@ def bluetoothctl_connect_device(mac):
         logger.info('line: ' + line)
         if not repower and 'Failed to connect: org.bluez.Error.NotReady' in line:
             do_cmd('power off')
-            sleep(2)
+            time.sleep(2)
             do_cmd('power on')
-            sleep(1)
+            time.sleep(1)
             # try to connect again
             p.stdin.write(f'bluetoothctl connect {mac}\n'.encode('utf-8'))
             p.stdin.flush()
@@ -313,10 +318,10 @@ def bluetoothctl_connect_device(mac):
             break
         if line:
             empty_count = 0
-            sleep(0.01)
+            time.sleep(0.01)
         else:
             empty_count += 1
-            sleep(0.5)
+            time.sleep(0.5)
     return ret
 
 
@@ -324,12 +329,16 @@ def wait_until_device_online(mac):
     while True:
         ret = bluetoothctl_connect_device(mac)
         if ret:
-            logger.info(f'{mac} is online, the screen will unlock in 10 seconds')
+            logger.info(f'{mac} is online, will check again after 10 seconds')
             # wait for a while to avoid unlocking the screen too soon
-            sleep(10)
-            unlock_screen()
-            return
-        sleep(5)
+            time.sleep(10)
+            info = bluetoothctl_get_device_info(mac)
+            if info['connected']:
+                unlock_screen()
+                return
+            else:
+                continue
+        time.sleep(5)
 
 
 def main_loop(mac):
@@ -341,8 +350,9 @@ def main_loop(mac):
             ret = bluetoothctl_connect_device(mac)
             if not ret:
                 lock_screen()
+                time.sleep(10)  # avoid reconnect too quickly
                 wait_until_device_online(mac)
-        sleep(3)
+        time.sleep(3)
 
 
 if __name__ == "__main__":
